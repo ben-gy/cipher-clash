@@ -174,6 +174,12 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
             )
             .join('')}
         </ul>
+        ${
+          ps.length < minPlayers
+            ? `<div class="lobby-searching"><span class="spinner" aria-hidden="true"></span>
+                 <span>Looking for ${minPlayers - ps.length} more player${minPlayers - ps.length === 1 ? '' : 's'}… share the invite link</span></div>`
+            : ''
+        }
         <div class="lobby-actions">
           ${
             net.isHost()
@@ -181,7 +187,7 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
                    ${ps.length < minPlayers ? `Waiting for ${minPlayers - ps.length} more…` : 'Start game'}
                  </button>`
               : `<button class="lobby-btn primary lobby-ready" type="button">${self().ready ? 'Not ready' : "I'm ready"}</button>
-                 <p class="lobby-wait">Waiting for the host to start…</p>`
+                 <p class="lobby-wait"><span class="spinner sm" aria-hidden="true"></span> Waiting for the host to start…</p>`
           }
         </div>
         <div class="lobby-flash" role="status" aria-live="polite"></div>

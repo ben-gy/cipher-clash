@@ -1,13 +1,23 @@
 /**
  * gen-dictionary.mjs — one-time offline generator for the bundled word list.
  *
- * Source: `an-array-of-english-words` (a SCOWL-derived list that, crucially for a
- * word game, INCLUDES plurals and inflected forms — the system /usr/share/dict
- * list does not, so "bars"/"cats"/"played" would be wrongly rejected). Output is
- * src/dictionary.txt (newline-joined, lowercase, a–z only, 3–9 letters),
- * committed to the repo so CI never needs this dependency.
+ * Goal: a dictionary a normal player recognises. A full Scrabble/SCOWL dump
+ * (~170k words) accepts obscure junk like "nom", "mon", "gos", "kis", "tis",
+ * "til", "sog", "lig", "moa" — which rewards smashing consonants around vowels
+ * instead of finding real words. So we use SCOWL's own frequency BANDS (via
+ * `wordlist-english`: band 10 = most common … 70 = obscure) and cap the band by
+ * word LENGTH — strictest on short words, where the junk concentrates:
  *
- *   npm i -D an-array-of-english-words   # if not already installed
+ *   length 3      -> band <= 35   (very common only)
+ *   length 4      -> band <= 40
+ *   length 5..9   -> band <= 50   (obscure long words are rarely findable anyway)
+ *
+ * This keeps plurals/inflections ("bars", "cats", "played") and common words
+ * ("figs", "kiln", "weep", "piles") while dropping the short-word junk. Output is
+ * src/dictionary.txt (newline-joined, lowercase, a–z, 3–9 letters), committed so
+ * CI never needs this dependency.
+ *
+ *   npm i -D wordlist-english   # if not already installed
  *   node scripts/gen-dictionary.mjs
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -19,17 +29,28 @@ const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT = join(__dirname, '..', 'src', 'dictionary.txt');
 
-const MIN = 3;
-const MAX = 9;
+const idx = require('wordlist-english');
+const BANDS = ['10', '20', '35', '40', '50', '55', '60', '70'];
 
-const source = require('an-array-of-english-words');
+// Cumulative set at each band (band N includes all words from bands <= N).
+const cumulative = {};
+const acc = new Set();
+for (const band of BANDS) {
+  for (const w of idx['english/' + band]) acc.add(w.toLowerCase());
+  cumulative[band] = new Set(acc);
+}
+
+function bandCapForLength(len) {
+  if (len <= 3) return '35';
+  if (len === 4) return '40';
+  return '50';
+}
 
 const seen = new Set();
-for (const raw of source) {
-  const w = raw.toLowerCase();
+for (const w of cumulative['70']) {
   if (!/^[a-z]+$/.test(w)) continue;
-  if (w.length < MIN || w.length > MAX) continue;
-  seen.add(w);
+  if (w.length < 3 || w.length > 9) continue;
+  if (cumulative[bandCapForLength(w.length)].has(w)) seen.add(w);
 }
 
 const words = [...seen].sort();
