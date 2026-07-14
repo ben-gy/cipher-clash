@@ -8,7 +8,13 @@ import './styles/main.css';
 import { createSfx } from './engine/sound';
 import { createStore } from './engine/storage';
 import { createNet, type Net } from './engine/net';
-import { createLobby, getOrCreateRoomCode } from './engine/lobby';
+import {
+  createLobby,
+  createRoomEntry,
+  getOrCreateRoomCode,
+  normalizeRoomCode,
+  setRoomInUrl,
+} from './engine/lobby';
 import { Session, PLAYER_COLORS } from './session';
 import type { PlayerInfo, MatchState } from './match';
 import { leader } from './match';
@@ -27,7 +33,15 @@ const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let net: Net | null = null;
 let lobby: { destroy: () => void } | null = null;
+let roomEntry: { destroy: () => void } | null = null;
 let session: Session | null = null;
+
+// A ?room= in the URL (an invite link) is honoured once; after that "Play with
+// friends" shows the create/join screen so the link is never the only way in.
+let pendingRoom: string | null = (() => {
+  const c = normalizeRoomCode(new URL(location.href).searchParams.get('room') ?? '');
+  return c.length >= 3 ? c : null;
+})();
 
 function defaultName(): string {
   const stored = store.get<string>('name', '');
@@ -72,6 +86,8 @@ function toast(msg: string): void {
 function leaveRoom(): void {
   lobby?.destroy();
   lobby = null;
+  roomEntry?.destroy();
+  roomEntry = null;
   try {
     net?.leave();
   } catch {
@@ -208,7 +224,29 @@ function startSolo(): void {
 function enterRoom(): void {
   leaveRoom();
   session = null;
-  const code = getOrCreateRoomCode();
+
+  // Deep-linked via an invite? Join it straight away, once.
+  if (pendingRoom) {
+    const code = pendingRoom;
+    pendingRoom = null;
+    openRoom(code);
+    return;
+  }
+
+  // Otherwise: create a fresh room or type a friend's code.
+  root.innerHTML = shell('<div class="entry-host"></div>');
+  roomEntry = createRoomEntry({
+    container: screen().querySelector<HTMLElement>('.entry-host')!,
+    subtitle: 'Start a new room, or enter a friend’s code to join theirs.',
+    onSubmit: (code) => openRoom(code),
+    onCancel: showMenu,
+  });
+}
+
+function openRoom(code: string): void {
+  leaveRoom();
+  session = null;
+  setRoomInUrl(code);
   net = createNet(
     { appId: APP_ID, roomId: code },
     {
@@ -335,11 +373,8 @@ function showResults(info: {
   screen().querySelector('.again-btn')!.addEventListener('click', () => {
     if (mode === 'solo') startSolo();
     else {
-      // fresh room join keeps channels clean for a rematch
-      const code = getOrCreateRoomCode();
-      leaveRoom();
-      history.replaceState(null, '', `?room=${code}`);
-      enterRoom();
+      // Rejoin the same room with fresh channels for a rematch.
+      openRoom(getOrCreateRoomCode());
     }
   });
   screen().querySelector('.share-btn')!.addEventListener('click', () => void shareResult(myScore, mode));

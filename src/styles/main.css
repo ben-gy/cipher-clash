@@ -399,6 +399,36 @@ kbd {
 .lobby-flash { text-align: center; color: var(--cyan); font-size: 13px; min-height: 18px; opacity: 0; transition: opacity 0.2s; }
 .lobby-flash.show { opacity: 1; }
 
+/* ---- room entry (create / join by code) ------------------------------------ */
+.room-entry {
+  max-width: 420px; margin: 0 auto; width: 100%;
+  padding: min(6vh, 40px) 20px 24px;
+  display: flex; flex-direction: column; gap: 14px; text-align: center;
+}
+.re-head { margin-bottom: 4px; }
+.re-title { font-size: 24px; margin: 0 0 6px; }
+.re-sub { color: var(--muted); font-size: 14px; margin: 0; }
+.re-create { width: 100%; }
+.re-divider {
+  display: flex; align-items: center; gap: 12px;
+  color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.re-divider::before, .re-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--tile-edge);
+}
+.re-join { display: flex; gap: 8px; }
+.re-input {
+  flex: 1; min-width: 0; font-family: ui-monospace, monospace;
+  font-size: 20px; font-weight: 700; letter-spacing: 0.22em; text-align: center; text-transform: uppercase;
+  padding: 10px 12px; border-radius: 10px; min-height: 44px;
+  background: var(--panel-2); color: var(--ink); border: 1px solid var(--tile-edge);
+}
+.re-input:focus { outline: none; border-color: var(--cyan); }
+.re-input::placeholder { letter-spacing: normal; font-weight: 500; text-transform: none; color: var(--muted); }
+.re-go { flex-shrink: 0; }
+.re-error { color: var(--rose, #fb7185); font-size: 13px; min-height: 18px; margin: 0; }
+.re-cancel { align-self: center; }
+
 /* ---- results --------------------------------------------------------------- */
 .results {
   max-width: 460px; margin: 0 auto; width: 100%;
