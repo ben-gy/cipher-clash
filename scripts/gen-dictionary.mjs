@@ -12,10 +12,23 @@
  *   length 4      -> band <= 40
  *   length 5..9   -> band <= 50   (obscure long words are rarely findable anyway)
  *
+ * The band cap is scaled by length because the "smash consonants around a vowel"
+ * problem is almost entirely a SHORT-word phenomenon: there are few 3-letter
+ * combos and a huge fraction are some obscure valid word, so you can smash into
+ * one without knowing it. Long words can't be smashed — if you trace a real
+ * uncommon 7-letter word you knew it, so we judge those far more leniently to
+ * reward real vocabulary:
+ *
+ *   length 3  -> band <= 35   (very common only — kills the smash-fest)
+ *   length 4  -> band <= 50
+ *   length 5+ -> band <= 60   (generous: real words like "trove", "abseil",
+ *                              "amphora", "quixotic" count; stops before band 70's
+ *                              obscure flood — "abfarad", "abomasum", "abelmosk")
+ *
  * This keeps plurals/inflections ("bars", "cats", "played") and common words
- * ("figs", "kiln", "weep", "piles") while dropping the short-word junk. Output is
- * src/dictionary.txt (newline-joined, lowercase, a–z, 3–9 letters), committed so
- * CI never needs this dependency.
+ * while dropping short-word junk, yet rewards an experienced player's real
+ * vocabulary on longer words. Output is src/dictionary.txt (newline-joined,
+ * lowercase, a–z, 3–9 letters), committed so CI never needs this dependency.
  *
  *   npm i -D wordlist-english   # if not already installed
  *   node scripts/gen-dictionary.mjs
@@ -41,9 +54,9 @@ for (const band of BANDS) {
 }
 
 function bandCapForLength(len) {
-  if (len <= 3) return '35';
-  if (len === 4) return '40';
-  return '50';
+  if (len <= 3) return '35'; // strict: kills short-word smashing
+  if (len === 4) return '50';
+  return '60'; // generous on 5+ to reward real vocabulary (long words can't be smashed)
 }
 
 const seen = new Set();

@@ -401,7 +401,7 @@ export class Session {
     if (word.length < MIN_WORD_LEN) return;
     if (!isWord(word) || !canFormLocal(this.board, word)) {
       this.o.sfx.play('hit');
-      this.toast(`Not a word: ${word.toUpperCase()}`, 'bad');
+      this.toast(`Not in word list: ${word.toUpperCase()}`, 'bad');
       this.triggerShake(4, true);
       return;
     }
@@ -429,7 +429,7 @@ export class Session {
       this.triggerShake(4, true);
     } else if (res.status === 'invalid') {
       this.o.sfx.play('hit');
-      this.toast(`Not a word: ${res.word.toUpperCase()}`, 'bad');
+      this.toast(`Not in word list: ${res.word.toUpperCase()}`, 'bad');
       this.triggerShake(4, true);
     } else {
       this.toast('Too short', 'bad');

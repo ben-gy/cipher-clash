@@ -326,6 +326,13 @@ body {
 .how-list { color: var(--ink); line-height: 1.6; padding-left: 20px; margin: 0 0 16px; }
 .how-list li { margin-bottom: 10px; }
 .how-list em { color: var(--amber); font-style: normal; }
+.how-note {
+  font-size: 13px; line-height: 1.55; color: var(--muted);
+  background: var(--panel-2); border: 1px solid var(--tile-edge);
+  border-radius: 10px; padding: 12px 14px; margin: 4px 0 16px;
+}
+.how-note strong { color: var(--ink); }
+.how-note em { color: var(--cyan); font-style: normal; }
 kbd {
   background: var(--panel-2); border: 1px solid var(--tile-edge);
   border-radius: 6px; padding: 1px 6px; font-family: inherit; font-size: 13px;

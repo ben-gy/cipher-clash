@@ -156,11 +156,13 @@ function showModal(kind: 'howto' | 'about'): void {
            <li>On a keyboard or by tapping, add letters one at a time and press <kbd>Enter</kbd> or <strong>Submit</strong>. <kbd>Backspace</kbd> undoes, <kbd>Esc</kbd> clears.</li>
            <li><strong>Longer words score much more</strong> — a 7-letter word is worth 9× a short one. You have 90 seconds.</li>
            <li><strong>Versus:</strong> everyone shares the same board and a word only scores for whoever claims it <em>first</em>. Grab the big ones before your rival does.</li>
-         </ol>`
+         </ol>
+         <p class="how-note"><strong>About the word list:</strong> Cipher Clash uses a curated list of everyday words, not a full tournament/Scrabble dictionary. Obscure short words like <em>nom</em> or <em>moa</em> — the kind you only land on by smashing letters — don't count, so the game rewards words you actually know. Longer words are judged more generously, so real vocabulary pays off. A few rare-but-real words may not be accepted; that's the trade-off for a game that feels fair rather than a memorisation race.</p>`
       : `<h2>About Cipher Clash</h2>
          <p>A fast word-grid race you can play solo or peer-to-peer with friends — no login, no install.</p>
          <p>Multiplayer is <strong>peer-to-peer over WebRTC</strong>: there is no game server. Setting up a room uses a free public signaling relay only to introduce players to each other; after that, moves flow directly between browsers and nothing is stored on any server.</p>
-         <p>The word list holds ${dictionarySize().toLocaleString()} words and ships inside the page, so the game works fully offline. No cookies or fingerprinting; anonymous, cookie-less page-view counts come from Cloudflare Web Analytics.</p>
+         <p><strong>The word list</strong> holds ${dictionarySize().toLocaleString()} curated everyday words (with plurals and inflections), not a full tournament/Scrabble dictionary. That's deliberate: accepting obscure Scrabble-only words like <em>nom</em>, <em>mon</em> or <em>moa</em> turns the game into smashing consonants around vowels instead of finding words you know. Short words are held to a strict common-word bar; longer words — which you can't smash into by accident — are judged far more leniently, so an experienced player's real vocabulary is rewarded. The list ships inside the page, so the game works fully offline.</p>
+         <p>No cookies or fingerprinting; anonymous, cookie-less page-view counts come from Cloudflare Web Analytics.</p>
          <p>Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a> · <a href="https://sites.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>.</p>`;
 
   const back = document.createElement('div');

@@ -30,6 +30,14 @@ describe('bundled dictionary', () => {
     }
   });
 
+  it('accepts sophisticated but real longer words (rewards vocabulary)', () => {
+    // Leniency scales with length: long words can't be smashed, so an experienced
+    // player's real vocabulary should count. Guards against over-curation.
+    for (const w of ['trove', 'abseil', 'amphora', 'quixotic', 'zephyr', 'quasar', 'phantasm', 'obelisk']) {
+      expect(isWord(w)).toBe(true);
+    }
+  });
+
   it('is a substantial curated list', () => {
     expect(dictionarySize()).toBeGreaterThan(30000);
     expect(dictionarySize()).toBeLessThan(80000);
