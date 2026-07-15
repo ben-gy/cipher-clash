@@ -63,7 +63,7 @@ function shell(inner: string): string {
     <div class="main-content">${inner}</div>
     <footer class="site-footer">
       Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a>
-      · <a href="https://sites.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>
+      · <a href="https://hub.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>
     </footer>`;
 }
 
@@ -179,7 +179,7 @@ function showModal(kind: 'howto' | 'about'): void {
          <p>Multiplayer is <strong>peer-to-peer over WebRTC</strong>: there is no game server. Setting up a room uses a free public signaling relay only to introduce players to each other; after that, moves flow directly between browsers and nothing is stored on any server.</p>
          <p><strong>The word list</strong> holds ${dictionarySize().toLocaleString()} curated everyday words (with plurals and inflections), not a full tournament/Scrabble dictionary. That's deliberate: accepting obscure Scrabble-only words like <em>nom</em>, <em>mon</em> or <em>moa</em> turns the game into smashing consonants around vowels instead of finding words you know. Short words are held to a strict common-word bar; longer words — which you can't smash into by accident — are judged far more leniently, so an experienced player's real vocabulary is rewarded. The list ships inside the page, so the game works fully offline.</p>
          <p>No cookies or fingerprinting; anonymous, cookie-less page-view counts come from Cloudflare Web Analytics.</p>
-         <p>Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a> · <a href="https://sites.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>.</p>`;
+         <p>Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a> · <a href="https://hub.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>.</p>`;
 
   const back = document.createElement('div');
   back.className = 'modal-back';
