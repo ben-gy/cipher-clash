@@ -450,17 +450,69 @@ kbd {
 .result-row.is-self { box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 40%, transparent); }
 .result-rank { font-weight: 800; color: var(--muted); width: 1.5ch; }
 .result-name { font-weight: 700; text-align: left; }
-.result-score { margin-left: auto; font-size: 24px; font-weight: 800; color: var(--c); font-variant-numeric: tabular-nums; }
-.my-words { text-align: left; }
-.my-words h3 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 8px; }
+.result-words { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.result-score { min-width: 2ch; font-size: 24px; font-weight: 800; color: var(--c); font-variant-numeric: tabular-nums; }
+
+/* running tally across rematches */
+.tally { margin: -6px 0 0; font-size: 13px; color: var(--muted); }
+.tally span { font-weight: 800; color: var(--c); }
+.tally span + span::before { content: ''; }
+
+/* the round's board, re-rendered so a word can be traced back onto it */
+.results-board { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.rboard {
+  position: relative; display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 4px; width: min(220px, 62vw); aspect-ratio: 1;
+}
+.rtile {
+  display: grid; place-items: center; border-radius: 8px;
+  background: var(--panel-2); border: 1px solid var(--tile-edge);
+  font-weight: 800; font-size: 15px; color: var(--muted);
+}
+.rpath { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.rhint { margin: 0; font-size: 12px; color: var(--muted); }
+
+/* per-player word lists — everyone's haul, not just yours */
+.word-lists { display: flex; flex-direction: column; gap: 14px; text-align: left; }
+.wgroup h3 {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 14px; margin: 0 0 8px; color: var(--c);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.wgroup .wcount { margin-left: auto; font-size: 11px; color: var(--muted); letter-spacing: 0; }
 .word-chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 26vh; overflow-y: auto; }
 .wchip {
   font-size: 13px; font-weight: 700; padding: 4px 9px; border-radius: 8px;
   background: var(--panel-2); border: 1px solid var(--tile-edge);
+  color: var(--ink); font-family: inherit; cursor: pointer;
 }
+.wchip:hover { border-color: var(--c, var(--cyan)); }
+.wchip.owned { border-left: 3px solid var(--c, var(--cyan)); }
+.wchip.tracing { background: var(--c, var(--cyan)); color: #06121a; }
+.wchip.tracing em { color: #06121a; }
 .wchip em { color: var(--amber); font-style: normal; font-size: 11px; }
 .none { color: var(--muted); }
+
+/* what nobody found */
+.missed { text-align: left; border-top: 1px solid var(--tile-edge); padding-top: 12px; }
+.missed summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: 14px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.missed[open] summary { margin-bottom: 8px; }
+.missed .mcount {
+  margin-left: auto; font-size: 11px; letter-spacing: 0;
+  background: var(--panel-2); border: 1px solid var(--tile-edge);
+  border-radius: 999px; padding: 1px 8px;
+}
+.mnote { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.wchip.miss { opacity: 0.75; }
+.wchip.miss em { color: var(--muted); }
+
 .results-actions { display: flex; flex-direction: column; gap: 10px; }
+.again-btn.waiting { opacity: 0.75; }
+.again-status { margin: -4px 0 0; font-size: 13px; color: var(--muted); min-height: 18px; }
 
 /* ---- responsive ------------------------------------------------------------ */
 @media (max-width: 380px) {

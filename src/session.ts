@@ -52,6 +52,8 @@ export interface SessionOptions {
     players: PlayerInfo[];
     selfIndex: number;
     mode: 'solo' | 'mp';
+    /** The board's seed, so results can rebuild the grid and solve it. */
+    seed: number;
   }) => void;
 }
 
@@ -82,8 +84,8 @@ export class Session {
   private knownClaims = new Set<string>();
   private idToIndex = new Map<string, number>();
 
-  private sendClaim?: (d: { w: string }) => void;
-  private sendSnap?: (d: Snapshot) => void;
+  private sendClaim?: ((d: { w: string }) => void) & { off: () => void };
+  private sendSnap?: ((d: Snapshot) => void) & { off: () => void };
 
   // DOM refs
   private els!: {
@@ -239,6 +241,20 @@ export class Session {
     this.sendSnap = net.channel<Snapshot>('snap', (snap) => {
       if (!this.isHost) this.onSnapshot(snap);
     });
+  }
+
+  /**
+   * Detach this round's receivers from the shared Net. The Net outlives the
+   * Session now (it spans every round in the room), and net.channel() fans out
+   * to all subscribers — so without this, a finished round keeps listening: the
+   * old host would resolve the next round's claims against the previous board
+   * and broadcast snapshots of a dead match over the live one.
+   */
+  private unwireNet(): void {
+    this.sendClaim?.off();
+    this.sendSnap?.off();
+    this.sendClaim = undefined;
+    this.sendSnap = undefined;
   }
 
   private start(): void {
@@ -696,14 +712,16 @@ export class Session {
     if (this.ended) return;
     this.ended = true;
     if (this.authoritative && this.o.mode === 'mp') this.broadcastSnap();
-    this.o.sfx.play('win');
     this.teardownInput();
     cancelAnimationFrame(this.raf);
+    // The outcome sound belongs to the results screen, which is the only place
+    // that knows whether this was a win or a loss.
     this.o.onResults({
       state: this.state,
       players: this.o.players,
       selfIndex: this.o.selfIndex,
       mode: this.o.mode,
+      seed: this.o.seed,
     });
   }
 
@@ -724,6 +742,7 @@ export class Session {
     this.ended = true;
     cancelAnimationFrame(this.raf);
     this.teardownInput();
+    this.unwireNet();
     this.particles.destroy();
   }
 }

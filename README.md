@@ -47,6 +47,23 @@ validate locally for instant feel and render the authoritative state. There is
 relay is used only to introduce peers. If the host leaves, a new host is elected
 automatically and continues from the last snapshot.
 
+**Rematches happen inside the room.** The room is joined once and held for the
+whole session; "Play again" is a vote, and the next round starts underneath you as
+soon as everyone has accepted — same peers, same connection, fresh board, and a
+running tally of rounds won. Leaving and rejoining the room to reset would look
+equivalent and is in fact fatal: Trystero memoizes `joinRoom` while `leave()`
+tears down asynchronously, so a rejoin returns the dying room and every peer ends
+up alone and self-elected as host. `src/engine/net.ts` throws if you try it, and
+`tests/net-lifecycle.test.ts` holds the line at one join per session.
+
+## After the round
+
+The summary shows **everyone's words**, grouped and colour-coded by player, not
+just your own — plus every word **nobody** found, because the board is solved
+exhaustively at round end (`solveBoard` in `src/board.ts`, a prefix-pruned DFS
+that takes ~0.2ms, so it runs inline). Tap any word to trace it back onto the
+grid.
+
 ## Tech
 
 - Vite 6 + vanilla TypeScript

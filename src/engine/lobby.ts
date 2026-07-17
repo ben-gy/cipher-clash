@@ -1,10 +1,18 @@
 /**
- * lobby.ts — drop-in P2P lobby built on net.ts (copied from patterns/).
+ * lobby.ts — drop-in P2P lobby view built on net.ts + rematch.ts.
  * Room code, invite link + Web Share, live roster with ready toggles, host-only
- * Start gated on min players, and a shared RNG seed broadcast at start.
+ * Start gated on min players.
+ *
+ * This file is a VIEW. It owns no protocol: presence, readiness, quorum, the
+ * shared seed and the frozen roster all come from rematch.ts, so starting the
+ * first round and starting a rematch are the same code path. The lobby used to
+ * run its own 'pres'/'preq'/'go' channels, which meant two ways to start a game
+ * and a 'go' that carried a seed but no roster — leaving peers free to disagree
+ * about who player 0 was.
  */
 
 import type { Net, PeerId } from './net';
+import type { Rounds } from './rematch';
 
 export interface LobbyPlayer {
   id: PeerId;
@@ -14,26 +22,15 @@ export interface LobbyPlayer {
   isSelf: boolean;
 }
 
-export interface LobbyStartInfo {
-  seed: number;
-  players: LobbyPlayer[];
-  isHost: boolean;
-}
-
 export interface LobbyConfig {
   container: HTMLElement;
   net: Net;
+  /** The round protocol driving this room. Owns start; the lobby just renders. */
+  rounds: Rounds;
   roomCode: string;
-  playerName: string;
   minPlayers?: number;
   maxPlayers?: number;
-  onStart: (info: LobbyStartInfo) => void;
   onCancel?: () => void;
-}
-
-interface Presence {
-  name: string;
-  ready: boolean;
 }
 
 /** Read ?room= from the URL, or mint a fresh 4-char code and push it into the URL. */
@@ -150,57 +147,27 @@ export function createRoomEntry(config: RoomEntryConfig): { destroy: () => void 
 }
 
 export function createLobby(config: LobbyConfig): { destroy: () => void } {
-  const { net, container } = config;
+  const { net, rounds, container } = config;
   const minPlayers = config.minPlayers ?? 2;
   const maxPlayers = config.maxPlayers ?? 8;
 
-  const presence = new Map<PeerId, Presence>();
-  presence.set(net.selfId, { name: config.playerName, ready: false });
-  let started = false;
-
-  const sendPres = net.channel<Presence & { id: PeerId }>('pres', (p) => {
-    presence.set(p.id, { name: p.name, ready: p.ready });
-    render();
-  });
-  const reqSync = net.channel<null>('preq', (_d, from) => {
-    sendPres({ id: net.selfId, ...self() }, from);
-  });
-  const sendGo = net.channel<{ seed: number }>('go', ({ seed }) => begin(seed));
-
-  function self(): Presence {
-    return presence.get(net.selfId)!;
-  }
-  function broadcastPresence(): void {
-    sendPres({ id: net.selfId, ...self() });
-  }
-
+  // The lobby renders; it does not decide. Presence, readiness, quorum and the
+  // start signal all live in rematch.ts, so the first round and every rematch
+  // travel the identical code path — including the frozen roster that keeps
+  // player indices identical on every peer.
   function players(): LobbyPlayer[] {
+    const s = rounds.state();
     const host = net.host();
-    return net
-      .peers()
-      .map((id) => {
-        const p = presence.get(id) ?? { name: '…', ready: false };
-        return { id, name: p.name, ready: p.ready, isHost: id === host, isSelf: id === net.selfId };
-      })
+    const ready = new Set(s.votes.map((v) => v.id));
+    return s.present
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        ready: ready.has(p.id),
+        isHost: p.id === host,
+        isSelf: p.id === net.selfId,
+      }))
       .sort((a, b) => (a.isSelf ? -1 : b.isSelf ? 1 : a.id.localeCompare(b.id)));
-  }
-
-  function canStart(): boolean {
-    const ps = players();
-    return net.isHost() && ps.length >= minPlayers && ps.every((p) => p.ready || p.isHost);
-  }
-
-  function begin(seed: number): void {
-    if (started) return;
-    started = true;
-    config.onStart({ seed, players: players(), isHost: net.isHost() });
-  }
-
-  function toggleReady(): void {
-    const me = self();
-    presence.set(net.selfId, { ...me, ready: !me.ready });
-    broadcastPresence();
-    render();
   }
 
   async function share(): Promise<void> {
@@ -231,16 +198,18 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
     }
   }
 
-  function start(): void {
-    if (!canStart()) return;
-    const seed = Math.floor(Math.random() * 0xffffffff) >>> 0;
-    sendGo({ seed });
-    begin(seed);
-  }
+  /** Repaint only on a real change — a blind interval would fight the user for
+   *  focus on the invite-link field. */
+  let painted = '';
 
   function render(): void {
-    if (started) return;
+    const s = rounds.state();
+    if (s.phase === 'playing') return;
     const ps = players();
+    const key = JSON.stringify([ps, s.canStart, s.voted]);
+    if (key === painted) return;
+    painted = key;
+
     const link = inviteLink(config.roomCode);
     container.innerHTML = `
       <div class="lobby">
@@ -256,9 +225,10 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
           ${ps
             .map(
               (p) => `<li class="lobby-player${p.isSelf ? ' is-self' : ''}">
-                <span class="lobby-dot ${p.ready || p.isHost ? 'ready' : ''}"></span>
+                <span class="lobby-dot ${p.ready ? 'ready' : ''}"></span>
                 <span class="lobby-name">${escapeHtml(p.name)}${p.isSelf ? ' (you)' : ''}</span>
-                ${p.isHost ? '<span class="lobby-badge">HOST</span>' : p.ready ? '<span class="lobby-badge ok">READY</span>' : ''}
+                ${p.isHost ? '<span class="lobby-badge">HOST</span>' : ''}
+                ${p.ready ? '<span class="lobby-badge ok">READY</span>' : ''}
               </li>`,
             )
             .join('')}
@@ -270,13 +240,13 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
             : ''
         }
         <div class="lobby-actions">
+          <button class="lobby-btn primary lobby-ready" type="button">${s.voted ? 'Not ready' : "I'm ready"}</button>
           ${
             net.isHost()
-              ? `<button class="lobby-btn primary lobby-start" type="button" ${canStart() ? '' : 'disabled'}>
-                   ${ps.length < minPlayers ? `Waiting for ${minPlayers - ps.length} more…` : 'Start game'}
+              ? `<button class="lobby-btn lobby-start" type="button" ${s.canStart ? '' : 'disabled'}>
+                   ${ps.length < minPlayers ? `Waiting for ${minPlayers - ps.length} more…` : 'Start now'}
                  </button>`
-              : `<button class="lobby-btn primary lobby-ready" type="button">${self().ready ? 'Not ready' : "I'm ready"}</button>
-                 <p class="lobby-wait"><span class="spinner sm" aria-hidden="true"></span> Waiting for the host to start…</p>`
+              : `<p class="lobby-wait"><span class="spinner sm" aria-hidden="true"></span> Waiting for the host to start…</p>`
           }
           ${config.onCancel ? '<button class="lobby-btn ghost lobby-cancel" type="button">Leave room</button>' : ''}
         </div>
@@ -284,31 +254,31 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
       </div>`;
 
     container.querySelector('.lobby-share')?.addEventListener('click', () => void share());
-    container.querySelector('.lobby-ready')?.addEventListener('click', toggleReady);
-    container.querySelector('.lobby-start')?.addEventListener('click', start);
+    container.querySelector('.lobby-ready')?.addEventListener('click', () => {
+      if (rounds.state().voted) rounds.unvote();
+      else rounds.vote();
+      render();
+    });
+    container.querySelector('.lobby-start')?.addEventListener('click', () => rounds.go());
     container.querySelector('.lobby-cancel')?.addEventListener('click', () => config.onCancel?.());
     container.querySelector<HTMLInputElement>('.lobby-link')?.addEventListener('focus', (e) => {
       (e.target as HTMLInputElement).select();
     });
   }
 
-  // Also spot a host transfer (net.ts re-elects when the host leaves) so a newly
+  // Spot a host transfer (net.ts re-elects when the host leaves) so a newly
   // promoted peer learns the Start button is now theirs.
   let lastHost = net.host();
   const poll = setInterval(() => {
-    if (started) return;
-    reqSync(null);
-    const host = net.host();
     render();
+    const host = net.host();
     if (host !== lastHost) {
       const wasHost = lastHost === net.selfId;
       lastHost = host;
       if (net.isHost() && !wasHost) flash("The host left — you're the host now");
     }
-  }, 1500);
+  }, 600);
 
-  broadcastPresence();
-  reqSync(null);
   render();
 
   return {

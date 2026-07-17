@@ -8,18 +8,18 @@ import './styles/main.css';
 import { createSfx } from './engine/sound';
 import { createStore } from './engine/storage';
 import { createNet, type Net } from './engine/net';
+import { createRounds, type Rounds } from './engine/rematch';
 import {
   createLobby,
   createRoomEntry,
-  getOrCreateRoomCode,
   normalizeRoomCode,
   setRoomInUrl,
 } from './engine/lobby';
 import { Session, PLAYER_COLORS } from './session';
 import type { PlayerInfo, MatchState } from './match';
 import { leader } from './match';
-import { scoreWord } from './board';
-import { dictionarySize } from './dictionary';
+import { findPath, generateBoard, scoreWord, solveBoard, type Board } from './board';
+import { dictionarySize, isPrefix, isWord } from './dictionary';
 
 const APP_ID = 'cipher-clash';
 const DURATION_MS = 90_000;
@@ -32,9 +32,12 @@ const sfx = createSfx(store.get<boolean>('muted', false));
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let net: Net | null = null;
+let rounds: Rounds | null = null;
 let lobby: { destroy: () => void } | null = null;
 let roomEntry: { destroy: () => void } | null = null;
 let session: Session | null = null;
+/** Rounds won per player id, kept across rematches for as long as the room lives. */
+let tally = new Map<string, number>();
 
 // A ?room= in the URL (an invite link) is honoured once; after that "Play with
 // friends" shows the create/join screen so the link is never the only way in.
@@ -83,24 +86,43 @@ function toast(msg: string): void {
   window.setTimeout(() => el?.classList.remove('show'), 1600);
 }
 
-function leaveRoom(): void {
+/** Resolves once any in-flight room teardown has fully finished. */
+let roomTeardown: Promise<void> = Promise.resolve();
+
+/**
+ * Tear the room down for good. Only ever called on the way to the menu — NEVER
+ * between rounds. `net.leave()` is awaited because Trystero keeps the room in
+ * its cache until teardown finishes; joining again before then hands back the
+ * dying room and every peer ends up alone and self-elected as host. Rematches
+ * keep the Net alive and start a new round inside it (engine/rematch.ts).
+ */
+function leaveRoom(): Promise<void> {
   lobby?.destroy();
   lobby = null;
   roomEntry?.destroy();
   roomEntry = null;
-  try {
-    net?.leave();
-  } catch {
-    /* ignore */
-  }
+  rounds?.destroy();
+  rounds = null;
+  session?.destroy();
+  session = null;
+  tally = new Map();
+  const leaving = net;
   net = null;
+  // CHAIN, never replace. leaveRoom() runs again on the way into a new room, and
+  // by then `net` is already null — replacing the promise there would hand back
+  // an instantly-resolved teardown while the real one was still inside
+  // Trystero's 99ms window, and the next createNet would throw.
+  roomTeardown = roomTeardown.then(() => leaving?.leave()).then(
+    () => undefined,
+    () => undefined,
+  );
+  return roomTeardown;
 }
 
 // ---- menu -------------------------------------------------------------------
 
 function showMenu(): void {
-  leaveRoom();
-  session = null;
+  void leaveRoom();
   const best = store.get<number>('best', 0);
   root.innerHTML = shell(`
     <main class="menu">
@@ -222,14 +244,13 @@ function startSolo(): void {
 // ---- multiplayer ------------------------------------------------------------
 
 function enterRoom(): void {
-  leaveRoom();
-  session = null;
+  void leaveRoom();
 
   // Deep-linked via an invite? Join it straight away, once.
   if (pendingRoom) {
     const code = pendingRoom;
     pendingRoom = null;
-    openRoom(code);
+    void openRoom(code);
     return;
   }
 
@@ -238,22 +259,52 @@ function enterRoom(): void {
   roomEntry = createRoomEntry({
     container: screen().querySelector<HTMLElement>('.entry-host')!,
     subtitle: 'Start a new room, or enter a friend’s code to join theirs.',
-    onSubmit: (code) => openRoom(code),
+    onSubmit: (code) => void openRoom(code),
     onCancel: showMenu,
   });
 }
 
-function openRoom(code: string): void {
+/**
+ * Join a room ONCE and hold it for as long as the player stays. Every round —
+ * the first and every rematch — runs inside this one Net via `rounds`. Nothing
+ * here may call net.leave() except the trip back to the menu.
+ */
+async function openRoom(code: string): Promise<void> {
   leaveRoom();
-  session = null;
+  // A previous room may still be tearing down (Trystero defers it ~99ms).
+  // Joining inside that window returns the dying room, so wait it out.
+  await roomTeardown;
   setRoomInUrl(code);
-  net = createNet(
-    { appId: APP_ID, roomId: code },
-    {
-      onHostChange: (_h, isSelf) => session?.setHost(isSelf),
-      onPeerLeave: () => session?.onPeerLeave(),
-    },
-  );
+
+  try {
+    net = createNet(
+      { appId: APP_ID, roomId: code },
+      {
+        onHostChange: (_h, isSelf) => session?.setHost(isSelf),
+        onPeerLeave: () => session?.onPeerLeave(),
+      },
+    );
+  } catch (err) {
+    // The room is somehow still held (see engine/net.ts). Never strand the
+    // player on a blank screen — say so and go back somewhere they can act.
+    console.error(err);
+    toast('Could not open that room — try again');
+    showMenu();
+    return;
+  }
+
+  rounds = createRounds({
+    net,
+    playerName,
+    minPlayers: MIN_PLAYERS,
+    onRound: ({ seed, players, isHost }) => startMp(seed, players, isHost),
+  });
+
+  showLobby(code);
+}
+
+function showLobby(code: string): void {
+  if (!net || !rounds) return;
   root.innerHTML = shell('<div class="lobby-host"></div>');
   const back = document.createElement('button');
   back.className = 'btn ghost lobby-back';
@@ -265,23 +316,31 @@ function openRoom(code: string): void {
   lobby = createLobby({
     container: screen().querySelector<HTMLElement>('.lobby-host')!,
     net,
+    rounds,
     roomCode: code,
-    playerName,
     minPlayers: MIN_PLAYERS,
     maxPlayers: MAX_PLAYERS,
-    onStart: ({ seed, players }) => {
-      startMp(seed, players.map((p) => ({ id: p.id, name: p.name })));
-    },
   });
 }
 
-function startMp(seed: number, lobbyPlayers: PlayerInfo[]): void {
+function startMp(seed: number, players: PlayerInfo[], isHost: boolean): void {
   if (!net) return;
   lobby?.destroy();
   lobby = null;
-  // Canonical ordering identical on every peer (sort by id) → stable indices.
-  const players = [...lobbyPlayers].sort((a, b) => a.id.localeCompare(b.id));
-  const selfIndex = Math.max(0, players.findIndex((p) => p.id === net!.selfId));
+  session?.destroy();
+
+  // The roster arrives frozen from the host, identical bytes on every peer, so
+  // index N is the same player everywhere. Deriving it locally is how scores
+  // used to land on the wrong name.
+  const selfIndex = players.findIndex((p) => p.id === net!.selfId);
+  if (selfIndex < 0) {
+    // Not in this round's roster (we joined mid-start). Wait for the next one
+    // rather than silently playing as player 0.
+    showLobby(new URL(location.href).searchParams.get('room') ?? '');
+    toast('Next round — you’re in the lobby');
+    return;
+  }
+
   root.innerHTML = shell('<div class="screen-host"></div>');
   session = new Session({
     root: screen().querySelector<HTMLElement>('.screen-host')!,
@@ -289,7 +348,7 @@ function startMp(seed: number, lobbyPlayers: PlayerInfo[]): void {
     players,
     selfIndex,
     mode: 'mp',
-    isHost: net.isHost(),
+    isHost,
     durationMs: DURATION_MS,
     sfx,
     reducedMotion,
@@ -306,9 +365,21 @@ function showResults(info: {
   players: PlayerInfo[];
   selfIndex: number;
   mode: 'solo' | 'mp';
+  seed: number;
 }): void {
-  const { state, players, selfIndex, mode } = info;
+  const { state, players, selfIndex, mode, seed } = info;
   const myScore = state.scores[selfIndex] ?? 0;
+  const board = generateBoard(seed);
+
+  // Everything findable on this board. ~0.2ms, so it runs inline — see board.ts.
+  const solution = solveBoard(board, isWord, isPrefix);
+  const claimed = new Set(state.order);
+  const missed = [...solution.keys()]
+    .filter((w) => !claimed.has(w))
+    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const boardTotal = [...solution.keys()].reduce((n, w) => n + scoreWord(w.length), 0);
+
+  rounds?.finish();
 
   let banner = '';
   if (mode === 'solo') {
@@ -324,62 +395,203 @@ function showResults(info: {
     if (win === -1) banner = `<p class="verdict tie">It's a tie!</p>`;
     else if (win === selfIndex) banner = `<p class="verdict win">You win! 🏆</p>`;
     else banner = `<p class="verdict lose">${escapeHtml(players[win]?.name ?? 'Rival')} wins</p>`;
+    const winner = players[win];
+    if (winner) tally.set(winner.id, (tally.get(winner.id) ?? 0) + 1);
   }
 
+  const wordsOf = (i: number): string[] =>
+    state.order
+      .filter((w) => state.claimedBy.get(w) === i)
+      .sort((a, b) => b.length - a.length || a.localeCompare(b));
+
   const ranked = players
-    .map((p, i) => ({ p, i, score: state.scores[i] ?? 0 }))
+    .map((p, i) => ({ p, i, score: state.scores[i] ?? 0, words: wordsOf(i) }))
     .sort((a, b) => b.score - a.score);
 
-  const myWords = state.order
-    .filter((w) => state.claimedBy.get(w) === selfIndex)
-    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const colour = (i: number): string => PLAYER_COLORS[i % PLAYER_COLORS.length];
+  const chip = (w: string, cls: string, style = ''): string =>
+    `<button class="wchip ${cls}" type="button" data-word="${escapeAttr(w)}"${style}>${escapeHtml(
+      w.toUpperCase(),
+    )} <em>+${scoreWord(w.length)}</em></button>`;
+
+  const multi = players.length > 1;
+  const showTally = multi && [...tally.values()].some((n) => n > 0);
+  const yourShare = boardTotal > 0 ? Math.round((myScore / boardTotal) * 100) : 0;
 
   root.innerHTML = shell(`
     <main class="results">
       <h1 class="results-title">Time!</h1>
       ${banner}
+      ${
+        showTally
+          ? `<p class="tally">Rounds won · ${players
+              .map((p, i) => `<span style="--c:${colour(i)}">${escapeHtml(p.name)} ${tally.get(p.id) ?? 0}</span>`)
+              .join(' · ')}</p>`
+          : ''
+      }
       <ul class="result-scores">
         ${ranked
           .map(
-            (r, rank) => `<li class="result-row${r.i === selfIndex ? ' is-self' : ''}" style="--c:${PLAYER_COLORS[r.i % PLAYER_COLORS.length]}">
+            (r, rank) => `<li class="result-row${r.i === selfIndex ? ' is-self' : ''}" style="--c:${colour(r.i)}">
               <span class="result-rank">${rank + 1}</span>
               <span class="result-name">${escapeHtml(r.p.name)}${r.i === selfIndex ? ' (you)' : ''}</span>
+              <span class="result-words">${r.words.length} word${r.words.length === 1 ? '' : 's'}</span>
               <span class="result-score">${r.score}</span>
             </li>`,
           )
           .join('')}
       </ul>
-      <div class="my-words">
-        <h3>Your words (${myWords.length})</h3>
-        <div class="word-chips">
-          ${
-            myWords.length
-              ? myWords
-                  .map((w) => `<span class="wchip">${escapeHtml(w.toUpperCase())} <em>+${scoreWord(w.length)}</em></span>`)
-                  .join('')
-              : '<span class="none">No words this round — try again!</span>'
-          }
+
+      <div class="results-board">
+        <div class="rboard" role="img" aria-label="The board from this round">
+          ${board.tiles
+            .map((t) => `<span class="rtile">${escapeHtml(t.letter)}</span>`)
+            .join('')}
+          <svg class="rpath" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
         </div>
+        <p class="rhint">Tap any word to see where it was on the grid.</p>
       </div>
+
+      <div class="word-lists">
+        ${ranked
+          .map(
+            (r) => `<section class="wgroup" style="--c:${colour(r.i)}">
+              <h3>${escapeHtml(r.p.name)}${r.i === selfIndex ? ' (you)' : ''} <span class="wcount">${r.words.length} · ${r.score} pts</span></h3>
+              <div class="word-chips">
+                ${
+                  r.words.length
+                    ? r.words.map((w) => chip(w, 'owned')).join('')
+                    : '<span class="none">Nothing this round</span>'
+                }
+              </div>
+            </section>`,
+          )
+          .join('')}
+      </div>
+
+      <details class="missed" ${missed.length ? '' : 'hidden'}>
+        <summary>
+          <span>Words you all missed</span>
+          <span class="mcount">${missed.length}</span>
+        </summary>
+        <p class="mnote">${
+          multi
+            ? `Between you, you found ${claimed.size} of ${solution.size} — ${yourShare}% of the board's ${boardTotal} points went to you.`
+            : `You found ${claimed.size} of ${solution.size} words on this board (${yourShare}% of ${boardTotal} points).`
+        }</p>
+        <div class="word-chips">
+          ${missed.slice(0, 60).map((w) => chip(w, 'miss')).join('')}
+        </div>
+        ${missed.length > 60 ? `<p class="mnote">…and ${missed.length - 60} more.</p>` : ''}
+      </details>
+
       <div class="results-actions">
-        <button class="btn primary big again-btn" type="button">Play again</button>
+        <button class="btn primary big again-btn" type="button">${
+          mode === 'solo' ? 'Play again' : 'Play again'
+        }</button>
         <button class="btn big share-btn" type="button">Share</button>
         <button class="btn ghost menu-btn" type="button">Menu</button>
       </div>
+      <p class="again-status" role="status" aria-live="polite"></p>
     </main>`);
 
-  sfx.play(mode === 'solo' ? 'win' : leader(state) === selfIndex ? 'win' : 'lose');
+  sfx.play(mode === 'solo' || leader(state) === selfIndex ? 'win' : 'lose');
 
-  screen().querySelector('.again-btn')!.addEventListener('click', () => {
-    if (mode === 'solo') startSolo();
-    else {
-      // Rejoin the same room with fresh channels for a rematch.
-      openRoom(getOrCreateRoomCode());
+  wireWordPaths(board, state, selfIndex);
+
+  const againBtn = screen().querySelector<HTMLButtonElement>('.again-btn')!;
+  const status = screen().querySelector<HTMLElement>('.again-status')!;
+
+  againBtn.addEventListener('click', () => {
+    if (mode === 'solo') {
+      startSolo();
+      return;
     }
+    // NOT a rejoin. The room and the whole peer mesh stay exactly as they are;
+    // this only registers a vote, and the next round starts underneath us when
+    // everyone has voted. Leaving and rejoining here is what used to strand both
+    // players alone as host — see engine/net.ts.
+    if (!rounds) return;
+    const s = rounds.state();
+    if (s.voted) {
+      rounds.unvote();
+    } else {
+      rounds.vote();
+    }
+    paintAgain();
   });
+
+  function paintAgain(): void {
+    if (mode === 'solo' || !rounds) return;
+    const s = rounds.state();
+    againBtn.textContent = s.voted ? 'Ready — waiting…' : 'Play again';
+    againBtn.classList.toggle('waiting', s.voted);
+    const waiting = s.present.length - s.votes.length;
+    status.textContent = s.voted
+      ? waiting > 0
+        ? `Waiting for ${waiting} more player${waiting === 1 ? '' : 's'}…`
+        : 'Starting…'
+      : `${s.votes.length}/${s.present.length} ready for another round`;
+  }
+
+  if (mode === 'mp') {
+    paintAgain();
+    const tick = setInterval(() => {
+      if (!document.body.contains(againBtn)) {
+        clearInterval(tick);
+        return;
+      }
+      paintAgain();
+    }, 500);
+  }
+
   screen().querySelector('.share-btn')!.addEventListener('click', () => void shareResult(myScore, mode));
   screen().querySelector('.menu-btn')!.addEventListener('click', showMenu);
 }
+
+/** Tap a word chip to trace it on the re-rendered board. */
+function wireWordPaths(board: Board, state: MatchState, selfIndex: number): void {
+  const svg = screen().querySelector<SVGSVGElement>('.rpath');
+  if (!svg) return;
+  const size = board.size;
+  const centre = (i: number): [number, number] => {
+    const cell = 100 / size;
+    return [(i % size) * cell + cell / 2, Math.floor(i / size) * cell + cell / 2];
+  };
+
+  let active: string | null = null;
+  for (const btn of screen().querySelectorAll<HTMLButtonElement>('.wchip')) {
+    btn.addEventListener('click', () => {
+      const word = btn.dataset.word!;
+      if (active === word) {
+        svg.innerHTML = '';
+        active = null;
+        for (const b of screen().querySelectorAll('.wchip')) b.classList.remove('tracing');
+        return;
+      }
+      active = word;
+      for (const b of screen().querySelectorAll('.wchip')) b.classList.toggle('tracing', b === btn);
+      const path = findPath(board, word);
+      if (!path) return;
+      const owner = state.claimedBy.get(word);
+      const stroke =
+        owner === undefined ? 'var(--muted)' : PLAYER_COLORS[owner % PLAYER_COLORS.length];
+      const pts = path.map(centre).map(([x, y]) => `${x},${y}`).join(' ');
+      svg.innerHTML =
+        `<polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="2.2" ` +
+        `stroke-linecap="round" stroke-linejoin="round" opacity="0.9" />` +
+        path
+          .map((i) => {
+            const [x, y] = centre(i);
+            return `<circle cx="${x}" cy="${y}" r="3" fill="${stroke}" opacity="0.9" />`;
+          })
+          .join('');
+      sfx.play('blip');
+      void selfIndex;
+    });
+  }
+}
+
 
 async function shareResult(score: number, mode: 'solo' | 'mp'): Promise<void> {
   const url = location.origin + location.pathname;
