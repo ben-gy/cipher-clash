@@ -27,6 +27,17 @@ describe('modeOf', () => {
       expect(Number.isInteger(modeOf(bad as unknown).size)).toBe(true);
     }
   });
+
+  it('resolves a hostile id off the wire without inheriting from Object', () => {
+    // MODES is an object literal, so 'constructor' / 'toString' are truthy on it.
+    // Returning one of those as a Mode would put `undefined` in every field —
+    // the exact NaN grid the fallback above exists to prevent, reached through
+    // the one input it exists to distrust.
+    for (const bad of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(modeOf(bad).id).toBe(DEFAULT_MODE);
+      expect(Number.isInteger(modeOf(bad).size)).toBe(true);
+    }
+  });
 });
 
 describe('the modes are actually different games', () => {

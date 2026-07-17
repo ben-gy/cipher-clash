@@ -429,6 +429,40 @@ kbd {
 .re-error { color: var(--rose, #fb7185); font-size: 13px; min-height: 18px; margin: 0; }
 .re-cancel { align-self: center; }
 
+/* ---- public / private ------------------------------------------------------- */
+/* The IP disclosure sits AT the opt-in, not in About: it is the whole cost of a
+   public room, and nobody opens About before tapping a button. */
+.re-note {
+  color: var(--muted); font-size: 12px; line-height: 1.5;
+  margin: -6px 0 0; text-align: left;
+}
+.vis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.vis-name { font-weight: 800; font-size: 14px; }
+.vis-meta { font-size: 11px; }
+.mode-note.pub { color: var(--amber); }
+
+/* ---- public room list ------------------------------------------------------- */
+.re-rooms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.re-room {
+  width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px;
+  text-align: left; align-items: baseline;
+  padding: 10px 12px; border-radius: 10px; min-height: 44px;
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--tile-edge); font-family: inherit; cursor: pointer;
+}
+.re-room:hover { border-color: var(--cyan); }
+.re-room:active { transform: translateY(1px); }
+.re-room-host { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.re-room-code {
+  font-family: ui-monospace, monospace; font-size: 13px;
+  letter-spacing: 0.14em; color: var(--cyan);
+}
+.re-room-note { color: var(--muted); font-size: 12px; }
+.re-room-meta { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.re-room-state { grid-column: 1 / -1; font-size: 11px; color: var(--amber); margin-top: 2px; }
+.re-room.playing { opacity: 0.8; }
+.re-empty { color: var(--muted); font-size: 14px; line-height: 1.55; margin: 4px 0; text-align: left; }
+
 /* ---- mode picker ------------------------------------------------------------ */
 .modes {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
@@ -438,13 +472,15 @@ kbd {
   grid-column: 1 / -1; margin: 2px 0 0; text-align: center;
   font-size: 12px; color: var(--muted); min-height: 16px;
 }
-.mode-chip {
+/* The visibility chips are deliberately the same object as a mode chip — same
+   grid, same weight. A public room is a choice about the room, not a warning. */
+.mode-chip, .vis-chip {
   display: flex; flex-direction: column; gap: 2px; align-items: center;
-  padding: 10px 6px; border-radius: 12px;
+  padding: 10px 6px; border-radius: 12px; min-height: 44px;
   background: var(--panel); border: 1px solid var(--tile-edge);
   color: var(--muted); font-family: inherit; cursor: pointer;
 }
-.mode-chip.on {
+.mode-chip.on, .vis-chip.on {
   color: var(--ink); border-color: var(--cyan);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--cyan) 35%, transparent);
 }

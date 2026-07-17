@@ -15,10 +15,15 @@ import { createRounds, type Rounds } from './engine/rematch';
 import {
   clearRoomInUrl,
   createLobby,
+  createListing,
   createRoomEntry,
   normalizeRoomCode,
   setRoomInUrl,
+  P2P_IP_NOTE,
+  type BoardAccess,
+  type Listing,
 } from './engine/lobby';
+import { createNoticeboard, type Noticeboard, type PublicRoom } from './engine/noticeboard';
 import { Session, PLAYER_COLORS } from './session';
 import type { PlayerInfo, MatchState } from './match';
 import { leader } from './match';
@@ -46,6 +51,11 @@ let lobby: { destroy: () => void; repaint: () => void } | null = null;
 let roomEntry: { destroy: () => void } | null = null;
 let session: Session | null = null;
 let countdown: { cancel: () => void } | null = null;
+let listing: Listing | null = null;
+let listingTick: number | undefined;
+/** The room we are in, and whether it is on the public list. Private by default. */
+let roomCode = '';
+let roomPublic = false;
 /** Rounds won per player id, kept across rematches for as long as the room lives. */
 let tally = new Map<string, number>();
 
@@ -100,12 +110,22 @@ function modeNote(): string {
   // The HOST's gossiped choice — never our own local pick. Rendering `modeId`
   // here would confidently tell a guest "Host picked Blitz" while the host was
   // actually on Marathon.
-  const hostOpts = rounds?.state().hostOpts as { mode?: unknown } | null | undefined;
+  const hostOpts = rounds?.state().hostOpts as
+    | { mode?: unknown; pub?: unknown }
+    | null
+    | undefined;
   if (hostOpts == null) return `<p class="mode-note">Waiting for the host’s pick…</p>`;
   const m = modeOf(hostOpts.mode);
-  return `<p class="mode-note">Host picked <strong>${escapeHtml(m.name)}</strong> · ${m.size}×${m.size} · ${Math.round(
-    m.durationMs / 1000,
-  )}s</p>`;
+  return (
+    `<p class="mode-note">Host picked <strong>${escapeHtml(m.name)}</strong> · ${m.size}×${m.size} · ${Math.round(
+      m.durationMs / 1000,
+    )}s</p>` +
+    // Guests are on the host's board too. Someone who was handed an invite link
+    // has no way of knowing strangers can walk in unless we say so.
+    (hostOpts.pub
+      ? `<p class="mode-note pub">This room is listed publicly — anyone browsing can join.</p>`
+      : '')
+  );
 }
 
 function wireModePicker(repaint: () => void): void {
@@ -116,6 +136,106 @@ function wireModePicker(repaint: () => void): void {
       repaint();
     });
   }
+}
+
+// ---- public / private --------------------------------------------------------
+
+/** The host's own control, in the lobby: a room can be taken off the list again. */
+function visibilityPicker(): string {
+  const chip = (pub: boolean, name: string, meta: string): string =>
+    `<button class="vis-chip${roomPublic === pub ? ' on' : ''}" type="button"
+      role="radio" aria-checked="${roomPublic === pub}" data-pub="${pub ? 1 : 0}">
+      <span class="vis-name">${escapeHtml(name)}</span>
+      <span class="vis-meta">${escapeHtml(meta)}</span>
+    </button>`;
+  return `
+    <div class="vis" role="radiogroup" aria-label="Who can join">
+      ${chip(false, 'Private', 'Invite only')}
+      ${chip(true, 'Public', 'Listed for anyone')}
+    </div>
+    <p class="re-note">${escapeHtml(P2P_IP_NOTE)}</p>`;
+}
+
+function wireVisibility(repaint: () => void): void {
+  for (const btn of screen().querySelectorAll<HTMLButtonElement>('.vis-chip')) {
+    btn.addEventListener('click', () => {
+      roomPublic = btn.dataset.pub === '1';
+      sfx.play('blip');
+      // Immediately, not on the next tick: "private" has to mean off the list
+      // now, not within a second.
+      syncListing();
+      repaint();
+    });
+  }
+}
+
+// ---- the public room list ----------------------------------------------------
+//
+// At most one board, held only while something is actually using it — browsing
+// the list, or listing our own room. It is a mesh of STRANGERS (see P2P_IP_NOTE),
+// so it is never opened by the page loading and never left running behind a
+// screen the player has walked away from.
+
+let board: Noticeboard | null = null;
+let boardRooms: ((rooms: PublicRoom[]) => void) | null = null;
+/** Serialises open/close. net.ts throws if the board's room is rejoined while
+ *  the last one is still tearing down, and browse → back → browse is two taps. */
+let boardQueue: Promise<void> = Promise.resolve();
+
+function onBoard(then: () => void): Promise<void> {
+  boardQueue = boardQueue
+    .then(() => {
+      board ??= createNoticeboard({ appId: APP_ID, onRooms: (r) => boardRooms?.(r) });
+      then();
+    })
+    .then(
+      () => undefined,
+      (e) => console.error(e),
+    );
+  return boardQueue;
+}
+
+const boardAccess: BoardAccess = {
+  open(onRooms) {
+    boardRooms = onRooms;
+    // Hand over whatever is already known so the list is not blank for a cycle.
+    return onBoard(() => onRooms(board!.rooms()));
+  },
+  announce(ad) {
+    return onBoard(() => board!.announce(ad));
+  },
+  close() {
+    boardRooms = null;
+    const b = board;
+    board = null;
+    if (!b) return;
+    // CHAIN, never replace — same trap as roomTeardown below.
+    boardQueue = boardQueue.then(() => b.destroy()).then(
+      () => undefined,
+      () => undefined,
+    );
+  },
+};
+
+/** Feed engine/lobby.ts's roomAd() rule the room's current truth. It decides. */
+function syncListing(): void {
+  if (!listing) return;
+  if (!net || !rounds) {
+    listing.close();
+    return;
+  }
+  const s = rounds.state();
+  listing.sync({
+    isPublic: roomPublic,
+    isHost: net.isHost(),
+    inLobby: !!lobby,
+    playing: s.phase === 'playing',
+    code: roomCode,
+    host: playerName,
+    players: s.present.length,
+    max: MAX_PLAYERS,
+    note: modeOf(modeId).name,
+  });
 }
 
 // ---- shell ------------------------------------------------------------------
@@ -162,6 +282,19 @@ function leaveRoom(): Promise<void> {
   roomEntry = null;
   rounds?.destroy();
   rounds = null;
+  // Off the list and off the board, before anything else can go wrong. Leaving
+  // is one of the three ways a room stops being public (the others are going
+  // private and starting a round) and it is the one where nobody is left to
+  // notice a stale listing.
+  listing?.close();
+  listing = null;
+  if (listingTick) clearInterval(listingTick);
+  listingTick = undefined;
+  roomPublic = false;
+  roomCode = '';
+  // Also covers a board opened by the browse screen: leaveRoom() is on every
+  // path out of it.
+  boardAccess.close();
   countdown?.cancel();
   countdown = null;
   session?.destroy();
@@ -268,6 +401,7 @@ function showModal(kind: 'howto' | 'about'): void {
       : `<h2>About Cipher Clash</h2>
          <p>A fast word-grid race you can play solo or peer-to-peer with friends — no login, no install.</p>
          <p>Multiplayer is <strong>peer-to-peer over WebRTC</strong>: there is no game server. Setting up a room uses a free public signaling relay only to introduce players to each other; after that, moves flow directly between browsers and nothing is stored on any server.</p>
+         <p><strong>Public rooms and your IP address.</strong> Rooms are private by default: only people you send the code to can find them. If you list a room publicly — or tap “Browse public games” — your browser joins a shared peer-to-peer list, and connecting to a peer means exchanging IP addresses. So on the public list, strangers can see your IP; in a private room, only the friends you invited can. That is true of any peer-to-peer game and there is no server here to hide behind. It is opt-in on both sides, nothing joins the list until you tap it, and your browser leaves the list as soon as you stop browsing or your room starts or goes private.</p>
          <p><strong>The word list</strong> holds ${dictionarySize().toLocaleString()} curated everyday words (with plurals and inflections), not a full tournament/Scrabble dictionary. That's deliberate: accepting obscure Scrabble-only words like <em>nom</em>, <em>mon</em> or <em>moa</em> turns the game into smashing consonants around vowels instead of finding words you know. Short words are held to a strict common-word bar; longer words — which you can't smash into by accident — are judged far more leniently, so an experienced player's real vocabulary is rewarded. The list ships inside the page, so the game works fully offline.</p>
          <p>No cookies or fingerprinting; anonymous, cookie-less page-view counts come from Cloudflare Web Analytics.</p>
          <p>Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a> · <a href="https://hub.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>.</p>`;
@@ -322,16 +456,19 @@ function enterRoom(): void {
   if (pendingRoom) {
     const code = pendingRoom;
     pendingRoom = null;
-    void openRoom(code, false);
+    void openRoom(code, false, false);
     return;
   }
 
-  // Otherwise: create a fresh room or type a friend's code.
+  // Otherwise: create a fresh room, type a friend's code, or browse the public
+  // list. Handing the entry `board` is what makes public rooms exist at all —
+  // it does not join anything until the player taps Browse.
   root.innerHTML = shell('<div class="entry-host"></div>');
   roomEntry = createRoomEntry({
     container: screen().querySelector<HTMLElement>('.entry-host')!,
     subtitle: 'Start a new room, or enter a friend’s code to join theirs.',
-    onSubmit: (code, created) => void openRoom(code, created),
+    board: boardAccess,
+    onSubmit: (code, created, isPublic) => void openRoom(code, created, isPublic),
     onCancel: showMenu,
   });
 }
@@ -341,12 +478,18 @@ function enterRoom(): void {
  * the first and every rematch — runs inside this one Net via `rounds`. Nothing
  * here may call net.leave() except the trip back to the menu.
  */
-async function openRoom(code: string, created: boolean): Promise<void> {
+async function openRoom(code: string, created: boolean, isPublic: boolean): Promise<void> {
   leaveRoom();
   // A previous room may still be tearing down (Trystero defers it ~99ms).
   // Joining inside that window returns the dying room, so wait it out.
   await roomTeardown;
+  // The public flag stays OUT of the URL. It is the host's live choice, not a
+  // property of the code: baked into an invite link it would survive the host
+  // flipping the room private, and every guest who forwarded the link would be
+  // handing on a claim that is no longer true.
   setRoomInUrl(code);
+  roomCode = code;
+  roomPublic = created && isPublic;
 
   try {
     net = createNet(
@@ -374,9 +517,16 @@ async function openRoom(code: string, created: boolean): Promise<void> {
     minPlayers: MIN_PLAYERS,
     // Only the host's pick counts, and it travels frozen with the start — a mode
     // each peer read from its own UI is a mode two peers can disagree about.
-    roundOpts: () => ({ mode: modeId }),
+    // `pub` rides along so a guest can see that strangers may walk in; it is
+    // gossiped with presence, so it is live rather than a claim from join time.
+    roundOpts: () => ({ mode: modeId, pub: roomPublic }),
     onRound: ({ seed, players, isHost, opts }) => startMp(seed, players, isHost, opts),
   });
+
+  listing = createListing(boardAccess);
+  // Player counts move, the host can flip the room private, and the host role
+  // itself can transfer mid-lobby. Poll one rule rather than hunt every edge.
+  listingTick = window.setInterval(syncListing, 1000);
 
   showLobby(code);
 }
@@ -400,15 +550,23 @@ function showLobby(code: string): void {
     maxPlayers: MAX_PLAYERS,
     // Only the host chooses; everyone else sees what they are about to play, so
     // nobody is surprised by a 5x5 three-minute round they did not pick.
-    modeSlot: () => (net!.isHost() ? modePicker() : modeNote()),
-    onModeMount: () => wireModePicker(() => lobby?.repaint()),
+    modeSlot: () => (net!.isHost() ? modePicker() + visibilityPicker() : modeNote()),
+    onModeMount: () => {
+      wireModePicker(() => lobby?.repaint());
+      wireVisibility(() => lobby?.repaint());
+    },
   });
+  syncListing();
 }
 
 function startMp(seed: number, players: PlayerInfo[], isHost: boolean, opts: unknown): void {
   if (!net) return;
   lobby?.destroy();
   lobby = null;
+  // The round is starting, so the room comes off the list right now — not up to
+  // a tick later, and not "once someone notices". syncListing reads `lobby`,
+  // which is the null above.
+  syncListing();
   session?.destroy();
   countdown?.cancel();
 

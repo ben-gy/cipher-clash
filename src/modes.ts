@@ -57,7 +57,15 @@ export const MODE_LIST: Mode[] = [MODES.blitz, MODES.classic, MODES.marathon];
  * Never trust it: an older peer, a corrupted store or a hand-edited message
  * would otherwise hand `undefined` to generateBoard and produce a board of size
  * NaN. Falling back keeps a mismatched peer playing Classic rather than crashing.
+ *
+ * hasOwn, NOT a plain `MODES[id] || …`: MODES is an object literal, so it
+ * inherits from Object.prototype and `MODES['constructor']` is the Object
+ * function — truthy, so it sails through the guard and gets returned AS a Mode
+ * with every field undefined. That is the exact NaN board this function exists
+ * to prevent, reached by the one input it exists to distrust. Same for
+ * 'toString', 'valueOf' and friends. Pinned by tests/modes.test.ts.
  */
 export function modeOf(id: unknown): Mode {
-  return (typeof id === 'string' && MODES[id as ModeId]) || MODES[DEFAULT_MODE];
+  if (typeof id === 'string' && Object.hasOwn(MODES, id)) return MODES[id as ModeId];
+  return MODES[DEFAULT_MODE];
 }
