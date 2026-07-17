@@ -4,12 +4,15 @@
  * The actual gameplay lives in Session; this file just wires screens together.
  */
 
+import './styles/mobile.css';
 import './styles/main.css';
+import { hardenViewport } from './engine/mobile';
 import { createSfx } from './engine/sound';
 import { createStore } from './engine/storage';
 import { createNet, type Net } from './engine/net';
 import { createRounds, type Rounds } from './engine/rematch';
 import {
+  clearRoomInUrl,
   createLobby,
   createRoomEntry,
   normalizeRoomCode,
@@ -25,6 +28,10 @@ const APP_ID = 'cipher-clash';
 const DURATION_MS = 90_000;
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 6;
+
+// Before anything renders: iOS ignores the viewport meta's user-scalable=no, so
+// a double-tap or pinch will zoom a live game and there is no way back out.
+hardenViewport();
 
 const root = document.getElementById('app')!;
 const store = createStore(APP_ID);
@@ -106,6 +113,9 @@ function leaveRoom(): Promise<void> {
   session?.destroy();
   session = null;
   tally = new Map();
+  // The room is over for us — take it out of the URL so a refresh, or reopening
+  // from the home screen, lands on the menu instead of silently rejoining.
+  clearRoomInUrl();
   const leaving = net;
   net = null;
   // CHAIN, never replace. leaveRoom() runs again on the way into a new room, and
@@ -246,11 +256,12 @@ function startSolo(): void {
 function enterRoom(): void {
   void leaveRoom();
 
-  // Deep-linked via an invite? Join it straight away, once.
+  // Deep-linked via an invite? Join it straight away, once. We are the guest
+  // here, never the host — the person who sent the link already holds the room.
   if (pendingRoom) {
     const code = pendingRoom;
     pendingRoom = null;
-    void openRoom(code);
+    void openRoom(code, false);
     return;
   }
 
@@ -259,7 +270,7 @@ function enterRoom(): void {
   roomEntry = createRoomEntry({
     container: screen().querySelector<HTMLElement>('.entry-host')!,
     subtitle: 'Start a new room, or enter a friend’s code to join theirs.',
-    onSubmit: (code) => void openRoom(code),
+    onSubmit: (code, created) => void openRoom(code, created),
     onCancel: showMenu,
   });
 }
@@ -269,7 +280,7 @@ function enterRoom(): void {
  * the first and every rematch — runs inside this one Net via `rounds`. Nothing
  * here may call net.leave() except the trip back to the menu.
  */
-async function openRoom(code: string): Promise<void> {
+async function openRoom(code: string, created: boolean): Promise<void> {
   leaveRoom();
   // A previous room may still be tearing down (Trystero defers it ~99ms).
   // Joining inside that window returns the dying room, so wait it out.
@@ -278,7 +289,10 @@ async function openRoom(code: string): Promise<void> {
 
   try {
     net = createNet(
-      { appId: APP_ID, roomId: code },
+      // `created` is the difference between minting this code and walking into
+      // someone else's room. Only the minter may host on arrival; a guest waits
+      // to hear from the incumbent instead of racing it for the role.
+      { appId: APP_ID, roomId: code, claimHost: created },
       {
         onHostChange: (_h, isSelf) => session?.setHost(isSelf),
         onPeerLeave: () => session?.onPeerLeave(),
@@ -486,9 +500,9 @@ function showResults(info: {
       </details>
 
       <div class="results-actions">
-        <button class="btn primary big again-btn" type="button">${
-          mode === 'solo' ? 'Play again' : 'Play again'
-        }</button>
+        <button class="btn primary big again-btn" type="button">Play again</button>
+        ${mode === 'mp' ? '<button class="btn big start-now-btn" type="button" hidden>Start now</button>' : ''}
+        ${mode === 'mp' ? '<button class="btn big lobby-btn" type="button">Back to lobby</button>' : ''}
         <button class="btn big share-btn" type="button">Share</button>
         <button class="btn ghost menu-btn" type="button">Menu</button>
       </div>
@@ -526,12 +540,27 @@ function showResults(info: {
     const s = rounds.state();
     againBtn.textContent = s.voted ? 'Ready — waiting…' : 'Play again';
     againBtn.classList.toggle('waiting', s.voted);
+
+    // The host never has to sit and hope: once enough people are in, it can
+    // start immediately rather than wait out the countdown.
+    const startNow = screen().querySelector<HTMLButtonElement>('.start-now-btn');
+    if (startNow) startNow.hidden = !s.canStart || s.votes.length === s.present.length;
+
     const waiting = s.present.length - s.votes.length;
-    status.textContent = s.voted
-      ? waiting > 0
-        ? `Waiting for ${waiting} more player${waiting === 1 ? '' : 's'}…`
-        : 'Starting…'
-      : `${s.votes.length}/${s.present.length} ready for another round`;
+    const secs = s.startsInMs !== null ? Math.ceil(s.startsInMs / 1000) : null;
+    if (!s.voted) {
+      status.textContent = `${s.votes.length}/${s.present.length} ready for another round`;
+    } else if (secs !== null) {
+      // Say WHY we are still waiting and when it ends. A bare "waiting…" with no
+      // horizon is what made this feel like a hang.
+      status.textContent = `Starting in ${secs}s — waiting for ${waiting} more player${
+        waiting === 1 ? '' : 's'
+      }`;
+    } else if (waiting > 0) {
+      status.textContent = `Waiting for ${waiting} more player${waiting === 1 ? '' : 's'}…`;
+    } else {
+      status.textContent = 'Starting…';
+    }
   }
 
   if (mode === 'mp') {
@@ -545,6 +574,14 @@ function showResults(info: {
     }, 500);
   }
 
+  screen().querySelector('.start-now-btn')?.addEventListener('click', () => rounds?.go());
+  screen().querySelector('.lobby-btn')?.addEventListener('click', () => {
+    // Back to the lobby WITHOUT leaving the room — the mesh, the roster and the
+    // running tally all survive. From there you can wait, re-ready, or watch who
+    // is still around, instead of the summary being a dead end with only Menu.
+    rounds?.unvote();
+    showLobby(new URL(location.href).searchParams.get('room') ?? '');
+  });
   screen().querySelector('.share-btn')!.addEventListener('click', () => void shareResult(myScore, mode));
   screen().querySelector('.menu-btn')!.addEventListener('click', showMenu);
 }
