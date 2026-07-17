@@ -6,6 +6,7 @@
 
 import './styles/mobile.css';
 import './styles/main.css';
+import { resolveName, withName } from './engine/identity';
 import { hardenViewport } from './engine/mobile';
 import { createSfx } from './engine/sound';
 import { createStore } from './engine/storage';
@@ -53,13 +54,15 @@ let pendingRoom: string | null = (() => {
   return c.length >= 3 ? c : null;
 })();
 
-function defaultName(): string {
-  const stored = store.get<string>('name', '');
-  if (stored) return stored;
-  const n = 'Player' + Math.floor(100 + Math.random() * 900);
-  return n;
+function randomName(): string {
+  return 'Player' + Math.floor(100 + Math.random() * 900);
 }
-let playerName = defaultName();
+
+// Reads ?n= (a name carried from the hub or a sibling game) and STRIPS it from
+// the URL before anything builds an invite link — those are derived from
+// location.href, so a lingering ?n= would ride along and rename whoever
+// accepted the invite. A link never overwrites a name already chosen here.
+let playerName = resolveName(store, randomName);
 
 function saveName(n: string): void {
   playerName = n.trim().slice(0, 16) || 'Player';
@@ -73,7 +76,7 @@ function shell(inner: string): string {
     <div class="main-content">${inner}</div>
     <footer class="site-footer">
       Built by <a href="https://benrichardson.dev/" target="_blank" rel="noopener">benrichardson.dev</a>
-      · <a href="https://hub.benrichardson.dev" target="_blank" rel="noopener">more games, tools &amp; sites</a>
+      · <a href="${escapeAttr(withName('https://hub.benrichardson.dev', playerName))}" target="_blank" rel="noopener">more games, tools &amp; sites</a>
     </footer>`;
 }
 
@@ -113,11 +116,14 @@ function leaveRoom(): Promise<void> {
   session?.destroy();
   session = null;
   tally = new Map();
-  // The room is over for us — take it out of the URL so a refresh, or reopening
-  // from the home screen, lands on the menu instead of silently rejoining.
-  clearRoomInUrl();
   const leaving = net;
   net = null;
+  // Only once we were actually IN a room: take the code out of the URL so a
+  // refresh, or reopening from the home screen, lands on the menu instead of
+  // silently rejoining. Clearing unconditionally would also wipe the ?room= of
+  // an invite the player has opened but not yet accepted — leaveRoom() runs on
+  // the way to the menu at boot, so a reload would throw the invite away.
+  if (leaving) clearRoomInUrl();
   // CHAIN, never replace. leaveRoom() runs again on the way into a new room, and
   // by then `net` is already null — replacing the promise there would hand back
   // an instantly-resolved teardown while the real one was still inside
