@@ -429,6 +429,53 @@ kbd {
 .re-error { color: var(--rose, #fb7185); font-size: 13px; min-height: 18px; margin: 0; }
 .re-cancel { align-self: center; }
 
+/* ---- mode picker ------------------------------------------------------------ */
+.modes {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  align-items: stretch;
+}
+.modes .mode-blurb {
+  grid-column: 1 / -1; margin: 2px 0 0; text-align: center;
+  font-size: 12px; color: var(--muted); min-height: 16px;
+}
+.mode-chip {
+  display: flex; flex-direction: column; gap: 2px; align-items: center;
+  padding: 10px 6px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--tile-edge);
+  color: var(--muted); font-family: inherit; cursor: pointer;
+}
+.mode-chip.on {
+  color: var(--ink); border-color: var(--cyan);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cyan) 35%, transparent);
+}
+.mode-name { font-weight: 800; font-size: 14px; }
+.mode-meta { font-size: 11px; font-variant-numeric: tabular-nums; }
+.mode-note { margin: 0; text-align: center; font-size: 12px; color: var(--muted); }
+.mode-note strong { color: var(--ink); }
+
+/* ---- countdown -------------------------------------------------------------- */
+/* Sits over the board so the grid is readable before the clock starts — the
+   whole point is that everyone gets the same look at it. */
+.cd-host { position: fixed; inset: 0; pointer-events: none; z-index: 40; }
+.countdown {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+.cd-num {
+  font-size: clamp(64px, 22vw, 132px); font-weight: 800; line-height: 1;
+  color: var(--cyan); text-shadow: 0 6px 30px color-mix(in srgb, var(--cyan) 45%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.cd-num.cd-go { color: var(--green); }
+.cd-num.cd-tick { animation: cd-pop 900ms ease-out; }
+.cd-num.cd-go { animation: cd-pop 420ms ease-out; }
+.countdown.reduced .cd-num { animation: none; }
+@keyframes cd-pop {
+  0% { transform: scale(1.5); opacity: 0; }
+  18% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.94); opacity: 0.85; }
+}
+
 /* ---- results --------------------------------------------------------------- */
 .results {
   max-width: 460px; margin: 0 auto; width: 100%;

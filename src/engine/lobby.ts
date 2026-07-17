@@ -31,6 +31,10 @@ export interface LobbyConfig {
   minPlayers?: number;
   maxPlayers?: number;
   onCancel?: () => void;
+  /** Optional game-settings block rendered above the actions (host picks). */
+  modeSlot?: () => string;
+  /** Called after each repaint so the slot's controls can be re-wired. */
+  onModeMount?: () => void;
 }
 
 /** Read ?room= from the URL, or mint a fresh 4-char code and push it into the URL. */
@@ -160,7 +164,7 @@ export function createRoomEntry(config: RoomEntryConfig): { destroy: () => void 
   };
 }
 
-export function createLobby(config: LobbyConfig): { destroy: () => void } {
+export function createLobby(config: LobbyConfig): { destroy: () => void; repaint: () => void } {
   const { net, rounds, container } = config;
   const minPlayers = config.minPlayers ?? 2;
   const maxPlayers = config.maxPlayers ?? 8;
@@ -222,7 +226,7 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
     const s = rounds.state();
     if (s.phase === 'playing') return;
     const ps = players();
-    const key = JSON.stringify([ps, s.canStart, s.voted, net.hostSettled()]);
+    const key = JSON.stringify([ps, s.canStart, s.voted, net.hostSettled(), config.modeSlot?.() ?? '']);
     if (key === painted) return;
     painted = key;
 
@@ -258,6 +262,7 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
                  <span>Looking for ${minPlayers - ps.length} more player${minPlayers - ps.length === 1 ? '' : 's'}… share the invite link</span></div>`
               : ''
         }
+        ${config.modeSlot ? config.modeSlot() : ''}
         <div class="lobby-actions">
           <button class="lobby-btn primary lobby-ready" type="button" ${net.hostSettled() ? '' : 'disabled'}>${s.voted ? 'Not ready' : "I'm ready"}</button>
           ${
@@ -272,6 +277,7 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
         <div class="lobby-flash" role="status" aria-live="polite"></div>
       </div>`;
 
+    config.onModeMount?.();
     container.querySelector('.lobby-share')?.addEventListener('click', () => void share());
     container.querySelector('.lobby-ready')?.addEventListener('click', () => {
       if (rounds.state().voted) rounds.unvote();
@@ -303,6 +309,10 @@ export function createLobby(config: LobbyConfig): { destroy: () => void } {
   return {
     destroy() {
       clearInterval(poll);
+    },
+    repaint() {
+      painted = '';
+      render();
     },
   };
 }

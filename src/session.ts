@@ -38,6 +38,8 @@ export const PLAYER_COLORS = ['#22d3ee', '#fbbf24', '#34d399', '#fb7185', '#a78b
 export interface SessionOptions {
   root: HTMLElement;
   seed: number;
+  /** Grid edge for this round's mode. Comes frozen from the host. */
+  size: number;
   players: PlayerInfo[];
   selfIndex: number;
   mode: 'solo' | 'mp';
@@ -52,8 +54,9 @@ export interface SessionOptions {
     players: PlayerInfo[];
     selfIndex: number;
     mode: 'solo' | 'mp';
-    /** The board's seed, so results can rebuild the grid and solve it. */
+    /** Seed + size, so results can rebuild this exact grid and solve it. */
     seed: number;
+    size: number;
   }) => void;
 }
 
@@ -114,7 +117,7 @@ export class Session {
     this.o = opts;
     this.isHost = opts.isHost;
     this.authoritative = opts.mode === 'solo' || opts.isHost;
-    this.board = generateBoard(opts.seed);
+    this.board = generateBoard(opts.seed, opts.size);
     this.state = createMatch(opts.players.length);
     this.clientRemaining = opts.durationMs;
     opts.players.forEach((p, i) => this.idToIndex.set(p.id, i));
@@ -722,6 +725,7 @@ export class Session {
       selfIndex: this.o.selfIndex,
       mode: this.o.mode,
       seed: this.o.seed,
+      size: this.o.size,
     });
   }
 

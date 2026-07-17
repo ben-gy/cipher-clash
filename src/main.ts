@@ -24,9 +24,10 @@ import type { PlayerInfo, MatchState } from './match';
 import { leader } from './match';
 import { findPath, generateBoard, scoreWord, solveBoard, type Board } from './board';
 import { dictionarySize, isPrefix, isWord } from './dictionary';
+import { createCountdown } from './countdown';
+import { DEFAULT_MODE, MODE_LIST, modeOf, type ModeId } from './modes';
 
 const APP_ID = 'cipher-clash';
-const DURATION_MS = 90_000;
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 6;
 
@@ -41,9 +42,10 @@ const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let net: Net | null = null;
 let rounds: Rounds | null = null;
-let lobby: { destroy: () => void } | null = null;
+let lobby: { destroy: () => void; repaint: () => void } | null = null;
 let roomEntry: { destroy: () => void } | null = null;
 let session: Session | null = null;
+let countdown: { cancel: () => void } | null = null;
 /** Rounds won per player id, kept across rematches for as long as the room lives. */
 let tally = new Map<string, number>();
 
@@ -64,9 +66,56 @@ function randomName(): string {
 // accepted the invite. A link never overwrites a name already chosen here.
 let playerName = resolveName(store, randomName);
 
+/** The mode this player last chose. The HOST's choice is what a room plays. */
+let modeId: ModeId = modeOf(store.get<string>('mode', DEFAULT_MODE)).id;
+
+function setMode(id: ModeId): void {
+  modeId = modeOf(id).id;
+  store.set('mode', modeId);
+}
+
 function saveName(n: string): void {
   playerName = n.trim().slice(0, 16) || 'Player';
   store.set('name', playerName);
+}
+
+// ---- mode picker -------------------------------------------------------------
+
+function modePicker(): string {
+  const m = modeOf(modeId);
+  return `
+    <div class="modes" role="radiogroup" aria-label="Game mode">
+      ${MODE_LIST.map(
+        (x) => `<button class="mode-chip${x.id === m.id ? ' on' : ''}" type="button"
+          role="radio" aria-checked="${x.id === m.id}" data-mode="${x.id}">
+          <span class="mode-name">${escapeHtml(x.name)}</span>
+          <span class="mode-meta">${x.size}×${x.size} · ${Math.round(x.durationMs / 1000)}s</span>
+        </button>`,
+      ).join('')}
+      <p class="mode-blurb">${escapeHtml(m.blurb)}</p>
+    </div>`;
+}
+
+function modeNote(): string {
+  // The HOST's gossiped choice — never our own local pick. Rendering `modeId`
+  // here would confidently tell a guest "Host picked Blitz" while the host was
+  // actually on Marathon.
+  const hostOpts = rounds?.state().hostOpts as { mode?: unknown } | null | undefined;
+  if (hostOpts == null) return `<p class="mode-note">Waiting for the host’s pick…</p>`;
+  const m = modeOf(hostOpts.mode);
+  return `<p class="mode-note">Host picked <strong>${escapeHtml(m.name)}</strong> · ${m.size}×${m.size} · ${Math.round(
+    m.durationMs / 1000,
+  )}s</p>`;
+}
+
+function wireModePicker(repaint: () => void): void {
+  for (const btn of screen().querySelectorAll<HTMLButtonElement>('.mode-chip')) {
+    btn.addEventListener('click', () => {
+      setMode(btn.dataset.mode as ModeId);
+      sfx.play('blip');
+      repaint();
+    });
+  }
 }
 
 // ---- shell ------------------------------------------------------------------
@@ -113,6 +162,8 @@ function leaveRoom(): Promise<void> {
   roomEntry = null;
   rounds?.destroy();
   rounds = null;
+  countdown?.cancel();
+  countdown = null;
   session?.destroy();
   session = null;
   tally = new Map();
@@ -153,6 +204,7 @@ function showMenu(): void {
         <span>Your name</span>
         <input class="name-input" type="text" maxlength="16" value="${escapeAttr(playerName)}" autocomplete="off" spellcheck="false" />
       </label>
+      ${modePicker()}
       <div class="menu-actions">
         <button class="btn primary big play-solo" type="button">Play solo</button>
         <button class="btn big play-mp" type="button">Play with friends</button>
@@ -168,6 +220,7 @@ function showMenu(): void {
   const nameInput = screen().querySelector<HTMLInputElement>('.name-input')!;
   nameInput.addEventListener('change', () => saveName(nameInput.value));
   nameInput.addEventListener('blur', () => saveName(nameInput.value));
+  wireModePicker(() => showMenu());
 
   screen().querySelector('.play-solo')!.addEventListener('click', () => {
     sfx.unlock();
@@ -241,15 +294,17 @@ function showModal(kind: 'howto' | 'about'): void {
 function startSolo(): void {
   const seed = (Math.floor(Math.random() * 0xffffffff) >>> 0);
   const players: PlayerInfo[] = [{ id: 'solo', name: playerName }];
+  const m = modeOf(modeId);
   root.innerHTML = shell('<div class="screen-host"></div>');
   session = new Session({
     root: screen().querySelector<HTMLElement>('.screen-host')!,
     seed,
+    size: m.size,
     players,
     selfIndex: 0,
     mode: 'solo',
     isHost: true,
-    durationMs: DURATION_MS,
+    durationMs: m.durationMs,
     sfx,
     reducedMotion,
     onQuit: showMenu,
@@ -317,7 +372,10 @@ async function openRoom(code: string, created: boolean): Promise<void> {
     net,
     playerName,
     minPlayers: MIN_PLAYERS,
-    onRound: ({ seed, players, isHost }) => startMp(seed, players, isHost),
+    // Only the host's pick counts, and it travels frozen with the start — a mode
+    // each peer read from its own UI is a mode two peers can disagree about.
+    roundOpts: () => ({ mode: modeId }),
+    onRound: ({ seed, players, isHost, opts }) => startMp(seed, players, isHost, opts),
   });
 
   showLobby(code);
@@ -340,18 +398,23 @@ function showLobby(code: string): void {
     roomCode: code,
     minPlayers: MIN_PLAYERS,
     maxPlayers: MAX_PLAYERS,
+    // Only the host chooses; everyone else sees what they are about to play, so
+    // nobody is surprised by a 5x5 three-minute round they did not pick.
+    modeSlot: () => (net!.isHost() ? modePicker() : modeNote()),
+    onModeMount: () => wireModePicker(() => lobby?.repaint()),
   });
 }
 
-function startMp(seed: number, players: PlayerInfo[], isHost: boolean): void {
+function startMp(seed: number, players: PlayerInfo[], isHost: boolean, opts: unknown): void {
   if (!net) return;
   lobby?.destroy();
   lobby = null;
   session?.destroy();
+  countdown?.cancel();
 
-  // The roster arrives frozen from the host, identical bytes on every peer, so
-  // index N is the same player everywhere. Deriving it locally is how scores
-  // used to land on the wrong name.
+  // Roster AND mode arrive frozen from the host, identical bytes on every peer,
+  // so index N is the same player and everyone plays the same board for the same
+  // length. Deriving either locally is how peers end up in different games.
   const selfIndex = players.findIndex((p) => p.id === net!.selfId);
   if (selfIndex < 0) {
     // Not in this round's roster (we joined mid-start). Wait for the next one
@@ -361,20 +424,38 @@ function startMp(seed: number, players: PlayerInfo[], isHost: boolean): void {
     return;
   }
 
-  root.innerHTML = shell('<div class="screen-host"></div>');
-  session = new Session({
-    root: screen().querySelector<HTMLElement>('.screen-host')!,
-    seed,
-    players,
-    selfIndex,
-    mode: 'mp',
-    isHost,
-    durationMs: DURATION_MS,
+  const m = modeOf((opts as { mode?: unknown } | undefined)?.mode);
+
+  // Show the board behind the countdown, but do not start the clock: the point
+  // is that everyone gets the same look at the grid before it counts.
+  root.innerHTML = shell(`<div class="screen-host"></div>
+    <div class="cd-host" aria-hidden="false"></div>`);
+  const host = screen().querySelector<HTMLElement>('.screen-host')!;
+
+  const begin = (): void => {
+    countdown = null;
+    session = new Session({
+      root: host,
+      seed,
+      size: m.size,
+      players,
+      selfIndex,
+      mode: 'mp',
+      isHost,
+      durationMs: m.durationMs,
+      sfx,
+      reducedMotion,
+      net: net!,
+      onQuit: showMenu,
+      onResults: showResults,
+    });
+  };
+
+  countdown = createCountdown({
+    root: root.querySelector<HTMLElement>('.cd-host')!,
     sfx,
     reducedMotion,
-    net,
-    onQuit: showMenu,
-    onResults: showResults,
+    onDone: begin,
   });
 }
 
@@ -386,10 +467,11 @@ function showResults(info: {
   selfIndex: number;
   mode: 'solo' | 'mp';
   seed: number;
+  size: number;
 }): void {
-  const { state, players, selfIndex, mode, seed } = info;
+  const { state, players, selfIndex, mode, seed, size } = info;
   const myScore = state.scores[selfIndex] ?? 0;
-  const board = generateBoard(seed);
+  const board = generateBoard(seed, size);
 
   // Everything findable on this board. ~0.2ms, so it runs inline — see board.ts.
   const solution = solveBoard(board, isWord, isPrefix);

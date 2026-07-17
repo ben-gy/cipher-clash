@@ -8,12 +8,16 @@
  * `nostr` (public Nostr relays); swap the import for `trystero/torrent` or
  * `trystero/mqtt` if relays are flaky in your region (see README).
  *
- * Netcode model this wrapper assumes: **host-authoritative star**. Every peer
- * runs the same election (lexicographically smallest peer id, self included) so
- * they all independently agree on who the host is — no handshake needed, and it
- * re-elects automatically when the host leaves. The host owns authoritative game
- * state and broadcasts snapshots; clients send inputs. For deterministic
- * lockstep games, pair this with rng.ts (shared seed) instead.
+ * Netcode model this wrapper assumes: **host-authoritative star**. The host owns
+ * authoritative game state and broadcasts snapshots; clients send inputs. For
+ * deterministic lockstep games, pair this with rng.ts (shared seed) instead.
+ *
+ * The host is decided by INCUMBENCY, not by an election on every join: whoever
+ * holds the room announces it, everyone else adopts, and the role only moves
+ * when the host LEAVES (then min-id among the survivors, which they all compute
+ * identically). A peer that has heard nothing yet is `unsettled` — isHost() is
+ * false and host() is null — so nobody can act as host on a mesh that has not
+ * formed. See the host section below for why both of those matter.
  *
  * COPY THIS FILE into src/ and adapt — do not re-roll the peer/host logic.
  *

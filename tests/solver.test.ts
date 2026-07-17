@@ -98,6 +98,25 @@ describe('solveBoard', () => {
     }
   });
 
+  it('solves a 5x5 Marathon board fast enough to run inline too', () => {
+    // The ~0.2ms figure was measured on a 4x4. A 5x5 is 25 tiles, and the raw
+    // path space grows combinatorially — only the prefix prune keeps this
+    // tractable. Measure it rather than assume the bigger mode is free, because
+    // this runs on the results screen on a phone.
+    solveBoard(generateBoard(1, 5), isWord, isPrefix); // warm the lazy dictionary
+
+    const t0 = performance.now();
+    let words = 0;
+    for (let seed = 0; seed < 20; seed++) {
+      words += solveBoard(generateBoard(seed, 5), isWord, isPrefix).size;
+    }
+    const perBoard = (performance.now() - t0) / 20;
+
+    expect(perBoard).toBeLessThan(150);
+    // A 5x5 should be a meaningfully richer board, or the mode is pointless.
+    expect(words / 20).toBeGreaterThan(40);
+  });
+
   it('solves a real board fast enough to run inline at round end', () => {
     // Warm the lazy dictionary + prefix set first — that cost is paid once.
     solveBoard(generateBoard(1), isWord, isPrefix);
