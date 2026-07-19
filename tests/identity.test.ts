@@ -11,7 +11,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { resolveName, takeNameFromLink, withName } from '../src/engine/identity';
+import { resolveName, takeNameFromLink, withName } from '@ben-gy/game-engine/identity';
 
 /** Minimal stand-in for engine/storage's createStore. */
 function memStore() {
