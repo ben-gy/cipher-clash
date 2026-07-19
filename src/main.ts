@@ -4,6 +4,11 @@
  * The actual gameplay lives in Session; this file just wires screens together.
  */
 
+// feedback:begin (managed by hub/scripts/feedback/backfill.mjs)
+import { mountFeedback } from './feedback';
+mountFeedback();
+// feedback:end
+
 import './styles/mobile.css';
 import './styles/main.css';
 import { resolveName, withName } from './engine/identity';
