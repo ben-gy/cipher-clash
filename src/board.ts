@@ -8,7 +8,7 @@
  * tile values along a path of touching, non-repeating tiles.
  */
 
-import { makeRng, randInt, type Rng } from './engine/rng';
+import { makeRng, randInt, type Rng } from '@ben-gy/game-engine/rng';
 
 export interface Tile {
   /** What the player sees on the tile: "A", "Qu", etc. */

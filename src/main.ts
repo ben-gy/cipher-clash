@@ -11,12 +11,13 @@ mountFeedback();
 
 import './styles/mobile.css';
 import './styles/main.css';
-import { resolveName, withName } from './engine/identity';
-import { hardenViewport } from './engine/mobile';
+import { resolveName, withName } from '@ben-gy/game-engine/identity';
+import { hardenViewport } from '@ben-gy/game-engine/mobile';
 import { createSfx } from './engine/sound';
-import { createStore } from './engine/storage';
-import { createNet, type Net } from './engine/net';
-import { createRounds, type Rounds } from './engine/rematch';
+import { createStore } from '@ben-gy/game-engine/storage';
+import { createNet, roomAppId, setTurnConfig, type Net } from '@ben-gy/game-engine/net';
+import { getTurnConfig } from '@ben-gy/game-engine/turn';
+import { createRounds, type Rounds } from '@ben-gy/game-engine/rematch';
 import {
   clearRoomInUrl,
   createLobby,
@@ -28,7 +29,7 @@ import {
   type BoardAccess,
   type Listing,
 } from './engine/lobby';
-import { createNoticeboard, type Noticeboard, type PublicRoom } from './engine/noticeboard';
+import { createNoticeboard, type Noticeboard, type PublicRoom } from '@ben-gy/game-engine/noticeboard';
 import { Session, PLAYER_COLORS } from './session';
 import type { PlayerInfo, MatchState } from './match';
 import { leader } from './match';
@@ -38,8 +39,29 @@ import { createCountdown } from './countdown';
 import { DEFAULT_MODE, MODE_LIST, modeOf, type ModeId } from './modes';
 
 const APP_ID = 'cipher-clash';
+/** Every mesh on this page — the game room AND the public-rooms noticeboard —
+ *  keys off this. roomAppId() stamps the protocol revision in, so an old build
+ *  left open in a tab cannot half-join a room speaking the new wire format. */
+const ROOM_APP_ID = roomAppId(APP_ID);
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 6;
+
+/**
+ * Fetch the TURN credentials ONCE, at boot, and publish them before any mesh
+ * exists. Trystero builds a single global connection pool from the config of
+ * the FIRST joinRoom on the page: a setTurnConfig that lands after that room is
+ * open is silently ignored for the initiating half of every pair, leaving those
+ * peers STUN-only. On carrier CGNAT (most phones on mobile data) STUN-only ICE
+ * never completes, which is why two players could sit in the same room and
+ * never see each other.
+ *
+ * This game opens two meshes — the noticeboard (browsing public rooms) and the
+ * game room — and either can be first depending on which button the player
+ * taps, so both await this promise rather than trusting boot order. It never
+ * rejects and never blocks a join: getTurnConfig resolves to [] on any failure
+ * and we simply proceed STUN-only.
+ */
+const turnReady: Promise<void> = getTurnConfig().then((servers) => setTurnConfig(servers));
 
 // Before anything renders: iOS ignores the viewport meta's user-scalable=no, so
 // a double-tap or pinch will zoom a live game and there is no way back out.
@@ -189,8 +211,11 @@ let boardQueue: Promise<void> = Promise.resolve();
 
 function onBoard(then: () => void): Promise<void> {
   boardQueue = boardQueue
-    .then(() => {
-      board ??= createNoticeboard({ appId: APP_ID, onRooms: (r) => boardRooms?.(r) });
+    .then(async () => {
+      // The noticeboard is often the first mesh on the page, so it must not
+      // open until the shared TURN config is published (see `turnReady`).
+      await turnReady;
+      board ??= createNoticeboard({ appId: ROOM_APP_ID, onRooms: (r) => boardRooms?.(r) });
       then();
     })
     .then(
@@ -488,6 +513,9 @@ async function openRoom(code: string, created: boolean, isPublic: boolean): Prom
   // A previous room may still be tearing down (Trystero defers it ~99ms).
   // Joining inside that window returns the dying room, so wait it out.
   await roomTeardown;
+  // Never open the game mesh before the TURN config is published (see
+  // `turnReady`) — a STUN-only host is invisible to anyone behind CGNAT.
+  await turnReady;
   // The public flag stays OUT of the URL. It is the host's live choice, not a
   // property of the code: baked into an invite link it would survive the host
   // flipping the room private, and every guest who forwarded the link would be
@@ -501,7 +529,7 @@ async function openRoom(code: string, created: boolean, isPublic: boolean): Prom
       // `created` is the difference between minting this code and walking into
       // someone else's room. Only the minter may host on arrival; a guest waits
       // to hear from the incumbent instead of racing it for the role.
-      { appId: APP_ID, roomId: code, claimHost: created },
+      { appId: ROOM_APP_ID, roomId: code, claimHost: created },
       {
         onHostChange: (_h, isSelf) => session?.setHost(isSelf),
         onPeerLeave: () => session?.onPeerLeave(),

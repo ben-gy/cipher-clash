@@ -31,7 +31,7 @@ import {
 import { isWord } from './dictionary';
 import { createParticles, type Particles } from './particles';
 import type { Sfx } from './engine/sound';
-import type { Net } from './engine/net';
+import type { Net } from '@ben-gy/game-engine/net';
 
 export const PLAYER_COLORS = ['#22d3ee', '#fbbf24', '#34d399', '#fb7185', '#a78bfa', '#fb923c'];
 
