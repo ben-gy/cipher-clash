@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Trace words on a shared letter grid and race to claim them before your rival does.",
+  "license": "AGPL-3.0-or-later",
   "scripts": {
     "gen:dict": "node scripts/gen-dictionary.mjs",
     "dev": "vite",

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Ben Richardson — https://benrichardson.dev
+// Additional terms under AGPL-3.0 section 7(b) apply; see ADDITIONAL-TERMS.md.
 /**
  * particles.ts — a tiny canvas particle overlay for score juice. Bursts a spray
  * of glyphs/dots in a player's colour when a word is claimed. Fully disabled

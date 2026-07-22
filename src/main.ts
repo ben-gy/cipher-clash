@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Ben Richardson — https://benrichardson.dev
+// Additional terms under AGPL-3.0 section 7(b) apply; see ADDITIONAL-TERMS.md.
 /**
  * main.ts — app bootstrap and screen router. Owns the persistent shell (footer),
  * the menu, the how-to / about modals, solo start, the P2P lobby, and results.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Ben Richardson — https://benrichardson.dev
+// Additional terms under AGPL-3.0 section 7(b) apply; see ADDITIONAL-TERMS.md.
 /**
  * board.ts — pure board logic. Deterministic generation from a seed (so every
  * P2P peer builds the identical grid), 8-way adjacency, path validation, word
