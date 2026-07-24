@@ -7,11 +7,6 @@
  * The actual gameplay lives in Session; this file just wires screens together.
  */
 
-// feedback:begin (managed by hub/scripts/feedback/backfill.mjs)
-import { mountFeedback } from './feedback';
-mountFeedback();
-// feedback:end
-
 import './styles/mobile.css';
 import './styles/main.css';
 import { resolveName, withName } from '@ben-gy/game-engine/identity';
@@ -910,7 +905,6 @@ function wireWordPaths(board: Board, state: MatchState, selfIndex: number): void
     });
   }
 }
-
 
 async function shareResult(score: number, mode: 'solo' | 'mp'): Promise<void> {
   const url = location.origin + location.pathname;
